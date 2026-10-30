@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>末日房车逃亡</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            margin: 0;
+            padding: 20px;
+        }
+        .game-container {
+            display: grid;
+            grid-template-columns: 3fr 1fr;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        #game-canvas {
+            background-color: #34495e;
+            border: 2px solid #7f8c8d;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .panel {
+            background-color: #34495e;
+            border: 2px solid #7f8c8d;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .progress-bar {
+            height: 20px;
+            background-color: #2c3e50;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            transition: width 0.3s;
+        }
+        .fuel { background-color: e74c3c; }
+        .health { background-color: 2ecc71; }
+        .morale { background-color: f39c12; }
+        .controls {
+            display: grid;
+            grid-template-areas: 
+                "up left down right";
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .control-btn {
+            width: 60px;
+            height: 60px;
+            background-color: #7f8c8d;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        .control-btn:active {
+            background-color: #95a5a6;
+        }
+        #up { grid-area: up; }
+        #left { grid-area: left; }
+        #down { grid-area: down; }
+        #right { grid-area: right; }
+        .npc-dialogue {
+            min-height: 100px;
+            max-height: 150px;
+            overflow-y: auto;
+            padding: 10px;
+            background-color: #2c3e50;
+            border-radius: 3px;
+            margin-bottom: 10px;
+        }
+        .action-btn {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            background-color: #3498db;
+            border: none;
+            border-radius: 3px;
+            color: white;
+            cursor: pointer;
+        }
+        .action-btn:hover {
+            background-color: #2980b9;
+        }
+        .loot-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px;
+            border-bottom: 1px solid #7f8c8d;
+        }
+        .damage-indicator {
+            position: absolute;
+            color: red;
+            font-weight: bold;
+            animation: float-up 1s forwards;
+        }
+        @keyframes float-up {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(-30px); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <h1 style="text-align: center; color: #e74c3c;">末日房车逃亡</h1>
+    <div class="game-container">
+        <canvas id="game-canvas" width="800" height="600"></canvas>
+        
+        <div class="sidebar">
+            <div class="panel">
+                <h3>车辆状态</h3>
+                <div class="status-bar">
+                    <span>燃油:</span>
+                    <div class="progress-bar"><div class="progress-fill fuel" style="width: 80%"></div></div>
+                </div>
+                <div class="status-bar">
+                    <span>耐久度:</span>
+                    <div class="progress-bar"><div class="progress-fill health" style="width: 100%"></div></div>
+                </div>
+                <div class="status-bar">
+                    <span>士气:</span>
+                    <div class="progress-bar"><div class="progress-fill morale" style="width: 60%"></div></div>
+                </div>
+                <div>载重: <span id="weight-display">450/600 kg</span></div>
+            </div>
+
+            <div class="panel">
+                <h3>成员状态</h3>
+                <div id="crew-list">
+                    <!-- 动态生成成员状态 -->
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>物资库存</h3>
+                <div id="inventory-list">
+                    <!-- 动态生成物品列表 -->
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>NPC对话</h3>
+                <div class="npc-dialogue" id="dialogue-box">
+                    欢迎来到安全区！需要帮助吗？
+                </div>
+                <button class="action-btn" onclick="generateDialogue()">询问情报</button>
+                <button class="action-btn" onclick="tradeWithNPC()">交易物资</button>
+                <button class="action-btn" onclick="leaveCheckpoint()">离开安全区</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 游戏核心状态
+        const gameState = {
+            vehicle: {
+                speed: 0,
+                maxSpeed: 10,
+                acceleration: 0.2,
+                direction: 0, // 角度，0表示向右
+                health: 100,
+                maxHealth: 100,
+                fuel: 80,
+                maxFuel: 100,
+                morale: 60,
+                maxMorale: 100,
+                weight: 450,
+                maxWeight: 600,
+                equipment: {
+                    armor: "基础装甲",
+                    engine: "标准引擎",
+                    weapon: "冲压撞角"
+                }
+            },
+            crew: [
+                { name: "驾驶员", role: "driver", status: "正常" },
+                { name: "机械师", role: "mechanic", status: "轻伤" },
+                { name: "医生", role: "doctor", status: "健康" }
+            ],
+            inventory: [
+                { name: "汽油罐", amount: 2, icon: "&#9981;" },
+                { name: "医疗包", amount: 3, icon: "&#128138;" },
+                { name: "罐头食品", amount: 5, icon: "&#129387;" }
+            ],
+            currentMap: generateRandomMap(),
+            enemies: [],
+            isInCheckpoint: true,
+            lastDamageTime: 0
+        };
+
+        // 初始化画布
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 车辆精灵 (像素风格)
+        function drawVehicle(x, y, direction) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(direction * Math.PI / 180);
+            
+            // 车身
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(-20, -15, 40, 30);
+            
+            // 车窗
+            ctx.fillStyle = '#3498db';
+            ctx.fillRect(-15, -10, 30, 10);
+            
+            // 车轮
+            ctx.fillStyle = '#2c3e50';
+            ctx.fillRect(-25, -20, 10, 5);
+            ctx.fillRect(15, -20, 10, 5);
+            ctx.fillRect(-25, 15, 10, 5);
+            ctx.fillRect(15, 15, 10, 5);
+            
+            // 根据装备显示特效
+            if(gameState.vehicle.equipment.weapon === "冲压撞角") {
+                ctx.fillStyle = '#f1c40f';
+                ctx.beginPath();
+                ctx.moveTo(20, 0);
+                ctx.lineTo(35, -5);
+                ctx.lineTo(35, 5);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+
+        // 随机生成地图
+        function generateRandomMap() {
+            const maps = [
+                { type: "urban", obstacles: [], enemyTypes: ["zombie"] },
+                { type: "forest", obstacles: [], enemyTypes: ["mutant"] },
+                { type: "desert", obstacles: [], enemyTypes: ["beast"] }
+            ];
+            return maps[Math.floor(Math.random() * maps.length)];
+        }
+
+        // 渲染游戏场景
+        function renderGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 绘制背景网格
+            ctx.strokeStyle = '#7f8c8d';
+            ctx.lineWidth = 1;
+            for(let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for(let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // 绘制障碍物
+            ctx.fillStyle = '#95a5a6';
+            gameState.currentMap.obstacles.forEach(obs => {
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+            });
+            
+            // 绘制敌人
+            gameState.enemies.forEach(enemy => {
+                ctx.fillStyle = enemy.type === "zombie" ? "#27ae60" : 
+                               enemy.type === "mutant" ? "#8e44ad" : "#e67e22";
+                ctx.fillRect(enemy.x, enemy.y, 20, 20);
+            });
+            
+            // 绘制房车
+            drawVehicle(canvas.width/2, canvas.height/2, gameState.vehicle.direction);
+            
+            // 更新UI
+            updateUI();
+        }
+
+        // 更新UI显示
+        function updateUI() {
+            document.querySelector('.fuel').style.width = `${gameState.vehicle.fuel}%`;
+            document.querySelector('.health').style.width = `${gameState.vehicle.health}%`;
+            document.querySelector('.morale').style.width = `${gameState.vehicle.morale}%`;
+            document.getElementById('weight-display').textContent = 
+                `${gameState.vehicle.weight}/${gameState.vehicle.maxWeight} kg`;
+            
+            // 更新成员状态
+            const crewList = document.getElementById('crew-list');
+            crewList.innerHTML = gameState.crew.map(member => 
+                `<div>${member.name}: ${member.status}</div>`
+            ).join('');
+            
+            // 更新物品栏
+            const invList = document.getElementById('inventory-list');
+            invList.innerHTML = gameState.inventory.map(item => 
+                `<div class="loot-item">${item.icon} ${item.name}: ${item.amount}</div>`
+            ).join('');
+        }
+
+        // 键盘控制
+        document.addEventListener('keydown', (e) => {
+            if(gameState.isInCheckpoint) return;
+            
+            switch(e.key) {
+                case 'ArrowUp':
+                case 'w':
+                    moveVehicle(0, -1);
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    moveVehicle(0, 1);
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                    moveVehicle(-1, 0);
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    moveVehicle(1, 0);
+                    break;
+            }
+        });
+
+        // 车辆移动逻辑
+        function moveVehicle(dx, dy) {
+            if(gameState.vehicle.fuel <= 0) return;
+            
+            // 更新方向
+            if(dx !== 0 || dy !== 0) {
+                gameState.vehicle.direction = Math.atan2(dy, dx) * 180 / Math.PI;
+            }
+            
+            // 加速度计算
+            gameState.vehicle.speed = Math.min(
+                gameState.vehicle.speed + gameState.vehicle.acceleration,
+                gameState.vehicle.maxSpeed
+            );
+            
+            // 燃油消耗
+            gameState.vehicle.fuel = Math.max(0, gameState.vehicle.fuel - 0.1);
+            
+            // 检查碰撞
+            checkCollisions();
+        }
+
+        // 碰撞检测
+        function checkCollisions() {
+            const now = Date.now();
+            if(now - gameState.lastDamageTime < 1000) return;
+            
+            gameState.enemies.forEach(enemy => {
+                const distance = Math.sqrt(
+                    Math.pow(canvas.width/2 - enemy.x, 2) + 
+                    Math.pow(canvas.height/2 - enemy.y, 2)
+                );
+                
+                if(distance < 30) {
+                    // 碾压伤害计算
+                    const damage = Math.floor(
+                        (gameState.vehicle.speed * gameState.vehicle.weight) / 100
+                    );
+                    enemy.health -= damage;
+                    
+                    // 显示伤害数字
+                    showDamage(enemy.x, enemy.y, damage);
+                    
+                    if(enemy.health <= 0) {
+                        gameState.enemies.splice(gameState.enemies.indexOf(enemy), 1);
+                        gainLoot(enemy.type);
+                    } else {
+                        gameState.lastDamageTime = now;
+                    }
+                }
+            });
+        }
+
+        // 显示伤害数字动画
+        function showDamage(x, y, damage) {
+            const indicator = document.createElement('div');
+            indicator.className = 'damage-indicator';
+            indicator.textContent = `-${damage}`;
+            indicator.style.left = `${x}px`;
+            indicator.style.top = `${y}px`;
+            document.body.appendChild(indicator);
+            
+            setTimeout(() => {
+                document.body.removeChild(indicator);
+            }, 1000);
+        }
+
+        // 获得战利品
+        function gainLoot(enemyType) {
+            const lootTable = {
+                zombie: [{ name: "布料", amount: 2, icon: "&#129525;" }],
+                mutant: [{ name: "电子元件", amount: 1, icon: "&#128268;" }],
+                beast: [{ name: "兽肉", amount: 3, icon: "&#127830;" }]
+            };
+            
+            const newItems = lootTable[enemyType] || [];
+            newItems.forEach(item => {
+                const existing = gameState.inventory.find(i => i.name === item.name);
+                if(existing) {
+                    existing.amount += item.amount;
+                } else {
+                    gameState.inventory.push(item);
+                }
+            });
+        }
+
+        // AI对话生成 (模拟)
+        function generateDialogue() {
+            const dialogues = [
+                "我听说北方有军队建立的安全区...",
+                "最近变异兽越来越活跃了，你们要小心！",
+                "我这里有张地图，标记了几个补给点的位置",
+                "东边的桥梁被丧尸占领了，建议绕行西侧"
+            ];
+            document.getElementById('dialogue-box').textContent = 
+                dialogues[Math.floor(Math.random() * dialogues.length)];
+        }
+
+        // 与NPC交易
+        function tradeWithNPC() {
+            const items = [
+                { name: "高级引擎蓝图", price: 5, icon: "&#9881;️" },
+                { name: "强化装甲板", price: 3, icon: "&#128737;️" },
+                { name: "医疗箱", price: 2, icon: "&#129520;" }
+            ];
+            
+            const randomItem = items[Math.floor(Math.random() * items.length)];
+            if(gameState.inventory.find(i => i.name === "零件")) {
+                const parts = gameState.inventory.find(i => i.name === "零件");
+                if(parts.amount >= randomItem.price) {
+                    parts.amount -= randomItem.price;
+                    gameState.inventory.push(randomItem);
+                    document.getElementById('dialogue-box').textContent = 
+                        `获得了 ${randomItem.name}！`;
+                } else {
+                    document.getElementById('dialogue-box').textContent = 
+                        "你的零件不够！";
+                }
+            } else {
+                document.getElementById('dialogue-box').textContent = 
+                    "你需要用零件来交换！";
+            }
+        }
+
+        // 离开检查点
+        function leaveCheckpoint() {
+            gameState.isInCheckpoint = false;
+            gameState.enemies = generateEnemies(5);
+            document.getElementById('dialogue-box').textContent = 
+                "正在进入荒野区域，保持警惕！";
+        }
+
+        // 生成敌人
+        function generateEnemies(count) {
+            const enemyTypes = ["zombie", "mutant", "beast"];
+            return Array.from({ length: count }, () => ({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                type: enemyTypes[Math.floor(Math.random() * enemyTypes.length)],
+                health: Math.floor(Math.random() * 50) + 20,
+                threatLevel: Math.random()
+            }));
+        }
+
+        // 游戏主循环
+        function gameLoop() {
+            if(!gameState.isInCheckpoint) {
+                // 敌人AI行为
+                gameState.enemies.forEach(enemy => {
+                    const dx = canvas.width/2 - enemy.x;
+                    const dy = canvas.height/2 - enemy.y;
+                    const distance = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if(distance > 5) {
+                        enemy.x += (dx/distance) * 0.5;
+                        enemy.y += (dy/distance) * 0.5;
+                    }
+                });
+                
+                // 燃料自然消耗
+                gameState.vehicle.fuel = Math.max(0, gameState.vehicle.fuel - 0.01);
+                
+                if(gameState.vehicle.fuel === 0) {
+                    document.getElementById('dialogue-box').textContent = 
+                        "燃油耗尽！必须在安全区补充燃料！";
+                    gameState.isInCheckpoint = true;
+                }
+            }
+            
+            renderGame();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 启动游戏
+        gameLoop();
+    </script>
+</body>
+</html>

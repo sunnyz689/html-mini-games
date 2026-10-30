@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第一人称飞行游戏</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-size: 1.2em;
+            text-shadow: 1px 1px 1px black;
+            pointer-events: none;
+            z-index: 100;
+        }
+        #score {
+            position: absolute;
+            top: 40px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-size: 1.5em;
+            font-weight: bold;
+            text-shadow: 1px 1px 1px black;
+            pointer-events: none;
+            z-index: 100;
+        }
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: red;
+            font-size: 3em;
+            font-weight: bold;
+            text-shadow: 2px 2px 2px black;
+            text-align: center;
+            display: none;
+            z-index: 200;
+        }
+        #restartButton {
+            padding: 10px 20px;
+            font-size: 1.2em;
+            margin-top: 20px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        #restartButton:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">使用 W,A,S,D 控制飞机方向，空格键加速</div>
+    <div id="score">分数: 0</div>
+    <div id="gameOver">
+        游戏结束!<br>
+        <button id="restartButton">重新开始</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // 游戏状态
+        let isGameOver = false;
+        let score = 0;
+        let obstacles = [];
+        let planeSpeed = 0.5;
+        let planeVelocity = new THREE.Vector3(0, 0, -planeSpeed);
+        const maxSpeed = 2.0;
+        const acceleration = 0.05;
+        const deceleration = 0.02;
+        let isAccelerating = false;
+
+        // 音效
+        const audioListener = new THREE.AudioListener();
+        const soundEffects = {
+            engine: null,
+            collision: null,
+            pass: null
+        };
+
+        // 创建场景
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // 天空蓝
+
+        // 创建相机
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 10);
+        camera.add(audioListener);
+
+        // 创建渲染器
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // 创建灯光
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 10, 7.5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        scene.add(directionalLight);
+
+        // 创建地面
+        const groundGeometry = new THREE.PlaneGeometry(2000, 2000);
+        const groundMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x1E8449, 
+            roughness: 0.8,
+            metalness: 0.2
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -50;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // 创建云层
+        function createClouds() {
+            for (let i = 0; i < 50; i++) {
+                const cloudGeometry = new THREE.SphereGeometry(Math.random() * 10 + 5, 8, 8);
+                const cloudMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0xffffff, 
+                    roughness: 0.9,
+                    metalness: 0.1,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const cloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
+                
+                cloud.position.x = Math.random() * 1000 - 500;
+                cloud.position.y = Math.random() * 100 + 50;
+                cloud.position.z = Math.random() * 1000 - 500;
+                
+                scene.add(cloud);
+            }
+        }
+
+        // 创建飞机模型
+        function createPlane() {
+            const group = new THREE.Group();
+            
+            // 机身
+            const bodyGeometry = new THREE.CylinderGeometry(0.5, 0.5, 4, 8);
+            const bodyMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xC0C0C0, 
+                roughness: 0.5,
+                metalness: 0.8
+            });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.rotation.x = Math.PI / 2;
+            body.castShadow = true;
+            group.add(body);
+            
+            // 机翼
+            const wingGeometry = new THREE.BoxGeometry(7, 0.2, 1.5);
+            const wingMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xC0C0C0, 
+                roughness: 0.5,
+                metalness: 0.7
+            });
+            const wing = new THREE.Mesh(wingGeometry, wingMaterial);
+            wing.castShadow = true;
+            group.add(wing);
+            
+            // 尾翼
+            const tailGeometry = new THREE.BoxGeometry(2, 0.2, 0.8);
+            const tailMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xC0C0C0, 
+                roughness: 0.5,
+                metalness: 0.7
+            });
+            const tail = new THREE.Mesh(tailGeometry, tailMaterial);
+            tail.position.z = -1.8;
+            tail.position.y = 0.5;
+            tail.castShadow = true;
+            group.add(tail);
+            
+            // 竖直尾翼
+            const verticalTailGeometry = new THREE.BoxGeometry(0.2, 1, 0.8);
+            const verticalTailMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xC0C0C0, 
+                roughness: 0.5,
+                metalness: 0.7
+            });
+            const verticalTail = new THREE.Mesh(verticalTailGeometry, verticalTailMaterial);
+            verticalTail.position.z = -1.8;
+            verticalTail.position.y = 1;
+            verticalTail.castShadow = true;
+            group.add(verticalTail);
+            
+            // 螺旋桨
+            const propellerGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.8);
+            const propellerMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x333333, 
+                roughness: 0.5,
+                metalness: 0.5
+            });
+            const propeller = new THREE.Mesh(propellerGeometry, propellerMaterial);
+            propeller.position.z = 2.1;
+            propeller.castShadow = true;
+            group.add(propeller);
+            
+            // 窗户
+            const windowGeometry = new THREE.SphereGeometry(0.3, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+            const windowMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x87CEFA, 
+                roughness: 0.2,
+                metalness: 0.8,
+                transparent: true,
+                opacity: 0.7
+            });
+            const planeWindow = new THREE.Mesh(windowGeometry, windowMaterial);
+            planeWindow.position.z = 1;
+            planeWindow.position.y = 0.3;
+            planeWindow.rotation.x = Math.PI;
+            group.add(planeWindow);
+            
+            // 将整个飞机旋转，使其朝向z轴负方向
+            group.rotation.y = Math.PI;
+            
+            return group;
+        }
+
+        // 创建障碍物
+        function createObstacle() {
+            const types = ['cube', 'sphere', 'cylinder'];
+            const type = types[Math.floor(Math.random() * types.length)];
+            
+            let geometry;
+            
+            if (type === 'cube') {
+                const size = Math.random() * 8 + 4;
+                geometry = new THREE.BoxGeometry(size, size, size);
+            } else if (type === 'sphere') {
+                const radius = Math.random() * 4 + 2;
+                geometry = new THREE.SphereGeometry(radius, 16, 16);
+            } else {
+                const radius = Math.random() * 3 + 1.5;
+                const height = Math.random() * 10 + 5;
+                geometry = new THREE.CylinderGeometry(radius, radius, height, 16);
+            }
+            
+            const colors = [0xFF4136, 0xFF851B, 0xFFDC00, 0x2ECC40, 0x0074D9, 0xB10DC9];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            
+            const material = new THREE.MeshStandardMaterial({ 
+                color: color, 
+                roughness: 0.7,
+                metalness: 0.3
+            });
+            
+            const obstacle = new THREE.Mesh(geometry, material);
+            
+            // 设置障碍物位置 - 在飞机前方一定距离内随机生成
+            const distance = Math.random() * 100 + 100;
+            const angle = Math.random() * Math.PI * 2;
+            const spread = 50;
+            
+            obstacle.position.x = Math.cos(angle) * spread;
+            obstacle.position.y = Math.random() * 40 - 10;  // 在不同高度生成
+            obstacle.position.z = plane.position.z - distance;
+            
+            obstacle.castShadow = true;
+            obstacle.receiveShadow = true;
+            
+            // 为障碍物添加碰撞边界盒
+            obstacle.userData.boundingBox = new THREE.Box3().setFromObject(obstacle);
+            
+            scene.add(obstacle);
+            obstacles.push(obstacle);
+            
+            return obstacle;
+        }
+
+        // 检测碰撞
+        function checkCollisions() {
+            if (isGameOver) return;
+            
+            const planeBoundingBox = new THREE.Box3().setFromObject(plane);
+            
+            for (let i = 0; i < obstacles.length; i++) {
+                const obstacle = obstacles[i];
+                
+                // 更新障碍物的边界盒
+                obstacle.userData.boundingBox.setFromObject(obstacle);
+                
+                // 检查碰撞
+                if (planeBoundingBox.intersectsBox(obstacle.userData.boundingBox)) {
+                    gameOver();
+                    playSoundEffect('collision');
+                    return;
+                }
+                
+                // 如果飞机通过了障碍物，增加分数
+                if (!obstacle.userData.passed && obstacle.position.z > plane.position.z) {
+                    obstacle.userData.passed = true;
+                    score += 10;
+                    updateScore();
+                    playSoundEffect('pass');
+                }
+            }
+        }
+
+        // 游戏结束
+        function gameOver() {
+            isGameOver = true;
+            document.getElementById('gameOver').style.display = 'block';
+            
+            // 停止引擎声音
+            if (soundEffects.engine) {
+                soundEffects.engine.setVolume(0);
+            }
+        }
+
+        // 重新开始游戏
+        function restartGame() {
+            // 重置游戏状态
+            isGameOver = false;
+            score = 0;
+            updateScore();
+            document.getElementById('gameOver').style.display = 'none';
+            
+            // 重置飞机位置和速度
+            plane.position.set(0, 0, 0);
+            planeSpeed = 0.5;
+            planeVelocity.set(0, 0, -planeSpeed);
+            
+            // 移除所有障碍物
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                scene.remove(obstacles[i]);
+            }
+            obstacles = [];
+            
+            // 重新开始引擎声音
+            if (soundEffects.engine) {
+                soundEffects.engine.setVolume(0.5);
+            }
+        }
+
+        // 更新分数显示
+        function updateScore() {
+            document.getElementById('score').textContent = '分数: ' + score;
+        }
+
+        // 加载音效
+        function loadSounds() {
+            // 飞机引擎声
+            const engineSound = new THREE.Audio(audioListener);
+            const engineAudioLoader = new THREE.AudioLoader();
+            engineAudioLoader.load('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/sounds/125510__klankbeeld__engine-hum-01.mp3', function(buffer) {
+                engineSound.setBuffer(buffer);
+                engineSound.setLoop(true);
+                engineSound.setVolume(0.5);
+                engineSound.play();
+                soundEffects.engine = engineSound;
+            }, undefined, function(e) {
+                console.error('Error loading engine sound:', e);
+                // 创建音频上下文并播放正弦波作为备用
+                createFallbackSound('engine');
+            });
+            
+            // 碰撞声音
+            const collisionSound = new THREE.Audio(audioListener);
+            const collisionAudioLoader = new THREE.AudioLoader();
+            collisionAudioLoader.load('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/sounds/476740__joao-janz__crash-collision-02.mp3', function(buffer) {
+                collisionSound.setBuffer(buffer);
+                collisionSound.setLoop(false);
+                collisionSound.setVolume(0.7);
+                soundEffects.collision = collisionSound;
+            }, undefined, function(e) {
+                console.error('Error loading collision sound:', e);
+                createFallbackSound('collision');
+            });
+            
+            // 通过障碍物音效
+            const passSound = new THREE.Audio(audioListener);
+            const passAudioLoader = new THREE.AudioLoader();
+            passAudioLoader.load('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/sounds/242857__plasterbrain__coin-get-sparkle.mp3', function(buffer) {
+                passSound.setBuffer(buffer);
+                passSound.setLoop(false);
+                passSound.setVolume(0.5);
+                soundEffects.pass = passSound;
+            }, undefined, function(e) {
+                console.error('Error loading pass sound:', e);
+                createFallbackSound('pass');
+            });
+        }
+
+        // 创建备用声音
+        function createFallbackSound(type) {
+            const audio = new THREE.Audio(audioListener);
+            const oscillator = audioListener.context.createOscillator();
+            const gain = audioListener.context.createGain();
+            
+            oscillator.connect(gain);
+            gain.connect(audio.gain);
+            
+            if (type === 'engine') {
+                oscillator.frequency.value = 200;
+                gain.gain.value = 0.1;
+                oscillator.start(0);
+                soundEffects.engine = audio;
+                audio.gain.gain.value = 0.5;
+            } else if (type === 'collision') {
+                oscillator.frequency.value = 80;
+                gain.gain.value = 0.3;
+                oscillator.start(0);
+                soundEffects.collision = audio;
+            } else if (type === 'pass') {
+                oscillator.frequency.value = 800;
+                gain.gain.value = 0.2;
+                oscillator.start(0);
+                soundEffects.pass = audio;
+            }
+        }
+
+        // 播放音效
+        function playSoundEffect(type) {
+            if (type === 'collision' && soundEffects.collision) {
+                soundEffects.collision.play();
+            } else if (type === 'pass' && soundEffects.pass) {
+                soundEffects.pass.play();
+            }
+        }
+
+        // 键盘控制
+        const keysPressed = {};
+        
+        document.addEventListener('keydown', (event) => {
+            keysPressed[event.key.toLowerCase()] = true;
+            
+            if (event.code === 'Space') {
+                isAccelerating = true;
+            }
+            
+            // 重新开始游戏
+            if (isGameOver && event.code === 'Enter') {
+                restartGame();
+            }
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            keysPressed[event.key.toLowerCase()] = false;
+            
+            if (event.code === 'Space') {
+                isAccelerating = false;
+            }
+        });
+
+        // 控制飞机
+        function controlPlane() {
+            if (isGameOver) return;
+            
+            // 转向控制
+            const rotationSpeed = 0.03;
+            
+            if (keysPressed['a']) {
+                plane.rotation.y += rotationSpeed;
+            }
+            if (keysPressed['d']) {
+                plane.rotation.y -= rotationSpeed;
+            }
+            if (keysPressed['w']) {
+                plane.rotation.x -= rotationSpeed;
+                // 限制俯仰角度
+                plane.rotation.x = Math.max(plane.rotation.x, -Math.PI / 4);
+            }
+            if (keysPressed['s']) {
+                plane.rotation.x += rotationSpeed;
+                // 限制俯仰角度
+                plane.rotation.x = Math.min(plane.rotation.x, Math.PI / 4);
+            }
+            
+            // 根据飞机方向更新速度矢量
+            planeVelocity.set(0, 0, -planeSpeed);
+            planeVelocity.applyEuler(new THREE.Euler(plane.rotation.x, plane.rotation.y, 0));
+            
+            // 加速/减速控制
+            if (isAccelerating && planeSpeed < maxSpeed) {
+                planeSpeed += acceleration;
+            } else if (!isAccelerating && planeSpeed > 0.5) {
+                planeSpeed -= deceleration;
+            }
+            
+            // 更新飞机位置
+            plane.position.add(planeVelocity);
+            
+            // 同步相机位置和方向
+            camera.position.copy(plane.position);
+            camera.rotation.copy(plane.rotation);
+            
+            // 调整引擎声音音量
+            if (soundEffects.engine) {
+                soundEffects.engine.setVolume(0.3 + (planeSpeed / maxSpeed) * 0.5);
+            }
+        }
+
+        // 更新障碍物
+        function updateObstacles() {
+            // 移除太远的障碍物
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                if (obstacles[i].position.z > plane.position.z + 50) {
+                    scene.remove(obstacles[i]);
+                    obstacles.splice(i, 1);
+                }
+            }
+            
+            // 随机生成新障碍物
+            if (Math.random() < 0.02 && obstacles.length < 20) {
+                createObstacle();
+            }
+        }
+
+        // 初始化游戏
+        function init() {
+            // 创建飞机
+            plane = createPlane();
+            scene.add(plane);
+            
+            // 创建云层
+            createClouds();
+            
+            // 加载音效
+            loadSounds();
+            
+            // 绑定重新开始按钮
+            document.getElementById('restartButton').addEventListener('click', restartGame);
+            
+            // 更新分数显示
+            updateScore();
+            
+            // 窗口大小调整
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            
+            // 开始动画循环
+            animate();
+        }
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (!isGameOver) {
+                controlPlane();
+                updateObstacles();
+                checkCollisions();
+            }
+            
+            renderer.render(scene, camera);
+        }
+
+        // 初始化游戏
+        init();
+    </script>
+</body>
+</html>
